@@ -185,16 +185,42 @@
    --------------------------------------------------------------------------- */
 let THREE=null;
 const THREE_CDNS=[
+  // Both of these serve the ORIGINAL, unmodified three.module.js. Re-bundling CDNs
+  // (skypack/esm.sh) are deliberately last: they rewrite the module, and a partial or
+  // broken rewrite still imports cleanly and then throws something like "F is not
+  // defined" the first time you touch it. That's why we now VALIDATE what we loaded.
   'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js',
   'https://unpkg.com/three@0.160.0/build/three.module.js',
-  'https://esm.sh/three@0.160.0',
-  'https://cdn.skypack.dev/three@0.160.0'
+  'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.min.js',
+  'https://esm.sh/three@0.160.0'
 ];
+/* everything this app actually touches — if any is missing the bundle is no good */
+const THREE_NEEDS=['WebGLRenderer','WebGLRenderTarget','Scene','Group','PerspectiveCamera','Raycaster',
+  'Vector3','Quaternion','Euler','Matrix4','Color','Shape','ExtrudeGeometry','BufferGeometry',
+  'BufferAttribute','PlaneGeometry','BoxGeometry','SphereGeometry','CylinderGeometry','ConeGeometry',
+  'TorusGeometry','CircleGeometry','GridHelper','Points','PointsMaterial','Line','LineBasicMaterial',
+  'Mesh','MeshBasicMaterial','MeshStandardMaterial','ShaderMaterial','Sprite','SpriteMaterial',
+  'CanvasTexture','TextureLoader','PointLight','HemisphereLight','DirectionalLight',
+  'AdditiveBlending','DoubleSide','BackSide','DynamicDrawUsage'];
+function threeLooksUsable(m){
+  if(!m)return false;
+  for(const k of THREE_NEEDS) if(m[k]===undefined) return k;   // returns the missing name
+  try{ const v=new m.Vector3(1,2,3); if(v.lengthSq()!==14)return 'Vector3 maths'; }catch(e){ return 'Vector3'; }
+  return true;
+}
+let _threeSrc='';
 for(const url of THREE_CDNS){
-  try{ window.__fwStatus&&window.__fwStatus('fetching engine…'); THREE=await import(/* @vite-ignore */ url); break; }
+  try{
+    window.__fwStatus&&window.__fwStatus('fetching engine…');
+    const m=await import(/* @vite-ignore */ url);
+    const ok=threeLooksUsable(m);
+    if(ok===true){ THREE=m; _threeSrc=url; break; }
+    console.warn('[VR-WORKS] bundle from',url,'is incomplete (missing:',ok,') — trying the next one');
+  }
   catch(e){ console.warn('[VR-WORKS] CDN failed:',url,e); }
 }
-if(!THREE){ window.__fwFail&&window.__fwFail('Could not download the 3D engine. Check your connection (or an adblocker/firewall may be blocking jsdelivr/unpkg).'); throw new Error('three.js unavailable'); }
+if(!THREE){ window.__fwFail&&window.__fwFail('Could not load a working copy of the 3D engine from any CDN. Check your connection, or an adblocker/firewall may be blocking jsdelivr and unpkg.'); throw new Error('three.js unavailable'); }
+console.log('[VR-WORKS] engine loaded from',_threeSrc);
 
 /* --- minimal orbit camera for the desktop preview (replaces OrbitControls) --- */
 class MiniOrbit{
@@ -231,11 +257,12 @@ function showWorldError(msg){
     g.strokeStyle='#ff6b6b'; g.lineWidth=8; g.strokeRect(6,6,988,288);
     g.textAlign='center'; g.fillStyle='#ff8a8a'; g.font='bold 58px "Space Grotesk",sans-serif';
     g.fillText('SOMETHING BROKE',500,66);
-    g.fillStyle='#ffd7d7'; g.font='30px "IBM Plex Mono",monospace';
-    const words=String(msg).split(' '); let line='',y=140;
+    g.fillStyle='#ffd7d7'; g.font='26px "IBM Plex Mono",monospace';
+    const words=String(msg).split(' '); const lines=[]; let line='';
     for(const w of words){ const t=line?line+' '+w:w;
-      if(g.measureText(t).width>930){ g.fillText(line,500,y); y+=40; line=w; if(y>250)break; } else line=t; }
-    if(y<=250)g.fillText(line,500,y);
+      if(g.measureText(t).width>930&&line){ lines.push(line); line=w; } else line=t; }
+    if(line)lines.push(line);
+    lines.slice(0,5).forEach((ln,i)=>g.fillText(ln,500,120+i*32));
     g.fillStyle='#8a90a8'; g.font='24px "IBM Plex Mono",monospace';
     g.fillText('take the headset off and reload',500,272);
     _errBanner=new THREE.Mesh(new THREE.PlaneGeometry(0.9,0.27),

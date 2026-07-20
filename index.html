@@ -3408,6 +3408,7 @@ function orientSegment(mesh,a,b){
   _b.copy(b).sub(a).normalize(); mesh.quaternion.setFromUnitVectors(_up,_b);
 }
 function updateHandOverlays(dt){
+  if(!handOverlays.length)return;
   const now=performance.now(), pulse=0.85+0.25*Math.sin(now*0.013);
   for(let i=0;i<2;i++){ const ov=handOverlays[i]; if(!ov)continue; const h=handObjs[i];
     if(!handTracked(i)){ ov.g.visible=false; continue; } ov.g.visible=true; const J=h.joints;
@@ -3534,8 +3535,11 @@ function onSnap(i,pos){
   audio&&audio.launch(pos,true);
   if(SEQ.on)seqPlayNow(); else igniteAll();
 }
-function updateInput(dt){ detectClap(dt);
+function updateInput(dt){
+  if(!controllers.length||!handObjs.length||!tipCursors.length)return;   // inputs not built yet
+  detectClap(dt);
   for(let i=0;i<2;i++){
+    if(!tipCursors[i])continue;
     handVel[i].subVectors(smoothPtr[i],_prevPtr[i]).divideScalar(Math.max(dt,0.001));
     _prevPtr[i].copy(smoothPtr[i]);rawPointer(i,_v1);smoothPtr[i].lerp(_v1,1-Math.pow(0.001,dt));const tracked=handTracked(i);inputState[i].tracked=tracked;
   const cur=tipCursors[i];if(tracked){cur.visible=true;cur.position.copy(smoothPtr[i]);}else cur.visible=false;
@@ -3743,7 +3747,7 @@ function updateHeld(){ if(!held)return;pointerPos(held.ci,_v1);const obj=held.mo
   if(held.mode==='new')obj.rotation.y+=0.05;
   const bad=collidesAt(_v1,held.def.launchType==='aerial'?0.06:0.09,held.mode==='move'?held.pad:null);const gl=obj.userData.glow;if(gl)gl.material.color.set(bad?0xff4a4a:obj.userData.col);}
 // hover highlight for UI
-function updateHover(){ for(const b of UI.buttons){ if(b.userData._base===undefined)b.userData._base=b.scale.x; b.scale.setScalar(b.userData._base);} 
+function updateHover(){ if(!controllers.length)return; for(const b of UI.buttons){ if(b.userData._base===undefined)b.userData._base=b.scale.x; b.scale.setScalar(b.userData._base);} 
   for(let i=0;i<2;i++){ if(!controllers[i])continue; aimRay(i); const btn=uiHit(raycaster); if(btn){btn.scale.setScalar((btn.userData._base||1)*1.12);} } }
 
 /* ============================ 15. Quality manager ============================ */
@@ -3784,15 +3788,21 @@ async function enterXR(){ try{
       console.error('XR session failed',e1,e2); return;
     }
   }
-  mode=sessionMode==='immersive-ar'?'ar':'vr';
+  /* Do NOT set `mode` yet. The render loop is already running, and the moment mode
+     becomes 'ar' it starts calling updateInput()/updateHandOverlays(), which need the
+     controllers, hands and fingertip cursors that buildXRInput() creates. There are
+     awaits below, so flipping mode early leaves a window of frames where those arrays
+     are still empty — that threw every frame and left the world blank. */
+  const wantMode = sessionMode==='immersive-ar' ? 'ar' : 'vr';
   renderer.xr.setReferenceSpaceType('local-floor');
   await renderer.xr.setSession(session);
 
   // everything below is safe now that the session exists
   try{ await DB.open(); CUSTOMS.push(...await DB.all('customs')); await loadPrefs(); }catch(e){ console.warn('storage unavailable',e); }
-  if(mode==='vr'){atmosphere.preset('Night',false);}else{atmosphere.preset('Passthrough',true);}
+  if(wantMode==='vr'){atmosphere.preset('Night',false);}else{atmosphere.preset('Passthrough',true);}
   atmosphere.update(0,SKYLIGHTS);
   buildXRInput();buildAllUI();ui.classList.add('hidden');hud.style.display='block';
+  mode=wantMode;                    // only now is it safe for the loop to run XR paths
   armGate();
   try{ const rs=renderer.xr.getReferenceSpace();
     if(rs&&rs.addEventListener)rs.addEventListener('reset',()=>{ _recenterHold=0.4; compensateRecenter(); });

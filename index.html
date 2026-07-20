@@ -219,7 +219,43 @@ const OrbitControls=MiniOrbit;
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const errEl=document.getElementById('err');
-function fatal(e){ console.error(e); if(errEl)errEl.textContent='Error: '+(e&&e.message||e); }
+/* If something throws while you're inside the headset there is no DOM to read, which is
+   how a failure can look like "the game is just empty". This puts the message on a panel
+   floating in front of you instead. */
+let _errBanner=null,_errShown=false;
+function showWorldError(msg){
+  if(_errShown)return; _errShown=true;
+  try{
+    const c=document.createElement('canvas'); c.width=1000; c.height=300; const g=c.getContext('2d');
+    g.fillStyle='rgba(40,8,12,0.95)'; g.fillRect(0,0,1000,300);
+    g.strokeStyle='#ff6b6b'; g.lineWidth=8; g.strokeRect(6,6,988,288);
+    g.textAlign='center'; g.fillStyle='#ff8a8a'; g.font='bold 58px "Space Grotesk",sans-serif';
+    g.fillText('SOMETHING BROKE',500,66);
+    g.fillStyle='#ffd7d7'; g.font='30px "IBM Plex Mono",monospace';
+    const words=String(msg).split(' '); let line='',y=140;
+    for(const w of words){ const t=line?line+' '+w:w;
+      if(g.measureText(t).width>930){ g.fillText(line,500,y); y+=40; line=w; if(y>250)break; } else line=t; }
+    if(y<=250)g.fillText(line,500,y);
+    g.fillStyle='#8a90a8'; g.font='24px "IBM Plex Mono",monospace';
+    g.fillText('take the headset off and reload',500,272);
+    _errBanner=new THREE.Mesh(new THREE.PlaneGeometry(0.9,0.27),
+      new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c),transparent:true,depthTest:false,depthWrite:false}));
+    _errBanner.renderOrder=9999; scene.add(_errBanner);
+  }catch(_){}
+}
+function updateErrBanner(){
+  if(!_errBanner)return;
+  camera.getWorldPosition(_o);
+  const f=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+  _errBanner.position.copy(_o).addScaledVector(f,1.0);
+  _errBanner.quaternion.copy(camera.quaternion);
+}
+function fatal(e){
+  console.error(e);
+  const msg=(e&&e.message)||String(e);
+  if(errEl)errEl.textContent='Error: '+msg;
+  if(typeof scene!=='undefined'&&typeof camera!=='undefined')showWorldError(msg);
+}
 
 /* ============================ 0. Seeded RNG + colour utils ============================ */
 function mulberry32(seed){ let a=seed>>>0; return function(){ a|=0;a=(a+0x6D2B79F5)|0;
@@ -3894,8 +3930,9 @@ renderer.setAnimationLoop((time)=>{ try{
       : '<b class="ember">SAFETY FIRST</b><br>grab the safety glasses<br>from the pedestal to begin';
   } else if(hud.style.display!=='none'){const inf=renderer.info.render;
     hud.innerHTML=`<b class="ember">VR-WORKS</b><br>mode <b>${mode}</b>${gameMode!=='free'?' · '+gameMode:''} · fps <b>${fps}</b><br>placed <b>${pads.length}</b> · particles <b>${engine.count}</b> · cap <b>${engine.softCap}</b><br>draws <b>${inf.calls}</b> · lib <b>${REG.length}</b>+<b>${CUSTOMS.length}</b> · seed <b>${rng.seed}</b>${challenge?`<br>challenge <b>${challenge.count}/${challenge.goal}</b>`:''}`;}
+  updateErrBanner();
   renderer.render(scene,camera);
-  }catch(e){ fatal(e); } });
+  }catch(e){ fatal(e); try{ updateErrBanner(); renderer.render(scene,camera); }catch(_){} } });
 
 /* ============================ 19. Wiring ============================ */
 document.getElementById('enter').addEventListener('click',enterXR);

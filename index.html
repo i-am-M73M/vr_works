@@ -63,7 +63,8 @@
   .btn.ghost{width:100%;margin-top:11px;color:var(--paper);background:rgba(138,144,168,.10);border:1px solid rgba(138,144,168,.25)}
   .hint{margin:16px 2px 0;color:var(--ash);font-size:12.5px;line-height:1.55}
   .hint b{color:var(--paper);font-weight:600}
-  .err{color:#e06a6a;font-size:13px;margin-top:10px;min-height:1.2em}
+  .err{color:#ffb4b4;font-size:14px;line-height:1.5;margin-top:12px;min-height:1.2em}
+  .err:not(:empty){background:rgba(90,20,28,.35);border:1px solid rgba(224,106,106,.5);border-radius:10px;padding:10px 12px}
   #hud{position:fixed;left:12px;top:12px;z-index:9;display:none;pointer-events:none;
     font:12px/1.5 "IBM Plex Mono",ui-monospace,monospace;color:var(--ash);
     background:rgba(6,7,13,.55);border:1px solid rgba(138,144,168,.2);border-radius:10px;padding:8px 11px}
@@ -3728,21 +3729,41 @@ function buildAllUI(){ buildLibraryChrome();buildArmButtons();buildIgnite();buil
 async function enterXR(){ try{
   if(errEl)errEl.textContent='';
   if(!('xr'in navigator)){errEl.textContent='WebXR not found. Use the Meta Quest Browser over HTTPS, or Preview.';return;}
-  audio.init();await DB.open();CUSTOMS.push(...await DB.all('customs'));await loadPrefs();
-  let sessionMode='immersive-ar';const supAR=await navigator.xr.isSessionSupported('immersive-ar').catch(()=>false);if(!supAR)sessionMode='immersive-vr';
-  const init={optionalFeatures:['hand-tracking','local-floor','bounded-floor','hit-test','plane-detection','mesh-detection','anchors','depth-sensing']};
-  let session;try{session=await navigator.xr.requestSession(sessionMode,init);}catch(e){try{sessionMode='immersive-vr';session=await navigator.xr.requestSession('immersive-vr',{optionalFeatures:['hand-tracking','local-floor']});}catch(e2){errEl.textContent='Could not start XR: '+(e2.message||e2);return;}}
-  mode=sessionMode==='immersive-ar'?'ar':'vr';renderer.xr.setReferenceSpaceType('local-floor');await renderer.xr.setSession(session);
+  audio.init();                       // synchronous — safe inside the gesture
+
+  /* IMPORTANT: requestSession() has to be the FIRST await in the click handler.
+     Any awaited work before it (IndexedDB, isSessionSupported, …) spends the browser's
+     transient user activation and the session request is then silently rejected. */
+  const arFeat={optionalFeatures:['hand-tracking','local-floor','bounded-floor','hit-test',
+                                  'plane-detection','mesh-detection','anchors','depth-sensing']};
+  let session=null, sessionMode='immersive-ar';
+  try{ session=await navigator.xr.requestSession('immersive-ar',arFeat); }
+  catch(e1){
+    try{ sessionMode='immersive-vr';
+      session=await navigator.xr.requestSession('immersive-vr',{optionalFeatures:['hand-tracking','local-floor','bounded-floor']}); }
+    catch(e2){
+      const msg=(e2&&e2.message)||String(e2);
+      errEl.textContent='Could not start XR: '+msg+
+        (/gesture|activation/i.test(msg)?' — tap the button again.':'');
+      console.error('XR session failed',e1,e2); return;
+    }
+  }
+  mode=sessionMode==='immersive-ar'?'ar':'vr';
+  renderer.xr.setReferenceSpaceType('local-floor');
+  await renderer.xr.setSession(session);
+
+  // everything below is safe now that the session exists
+  try{ await DB.open(); CUSTOMS.push(...await DB.all('customs')); await loadPrefs(); }catch(e){ console.warn('storage unavailable',e); }
   if(mode==='vr'){atmosphere.preset('Night',false);}else{atmosphere.preset('Passthrough',true);}
   atmosphere.update(0,SKYLIGHTS);
   buildXRInput();buildAllUI();ui.classList.add('hidden');hud.style.display='block';
-  armGate();                       // safety-glasses gate — this never ran in XR before
+  armGate();
   try{ const rs=renderer.xr.getReferenceSpace();
     if(rs&&rs.addEventListener)rs.addEventListener('reset',()=>{ _recenterHold=0.4; compensateRecenter(); });
   }catch(e){}
   session.addEventListener('visibilitychange',()=>{ _recenterHold=0.6; });
   session.addEventListener('end',()=>{mode='idle';hud.style.display='none';ui.classList.remove('hidden');});
-  }catch(e){fatal(e);} }
+  }catch(e){ fatal(e); } }
 
 /* ============================ 17. Desktop preview ============================ */
 let orbit=null,floor=null,previewSel=0,dragPad=null;
